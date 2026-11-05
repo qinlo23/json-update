@@ -27,7 +27,7 @@ def test_embedded_labels_and_unchanged_fields(tmp_path):
     doc.edit(fields[0], '新标签"\\\n中文')
     doc.edit(fields[1], '已归位')
     assert doc.save() == 2
-    result = json.loads(doc.path.read_text())
+    result = json.loads(doc.path.read_text(encoding='utf-8-sig'))
     assert isinstance(result['annotation']['result'], str)
     new_inner = json.loads(result['annotation']['result'])
     inner['videoSegmentTool']['result'][0]['label'] = '新标签"\\\n中文'
@@ -58,7 +58,7 @@ def test_invalid_internal_isolated(tmp_path):
     assert [f.name for f in doc.fields] == ['name']
     doc.edit(doc.fields[0], 'changed')
     doc.save()
-    assert json.loads(doc.path.read_text())['annotation']['result'] == '{broken'
+    assert json.loads(doc.path.read_text(encoding='utf-8-sig'))['annotation']['result'] == '{broken'
 
 
 @pytest.mark.parametrize('text', ['{"x":1,"x":2}', '{"x":NaN}', '{"x":Infinity}', '{"x":1e999}', '{"x":0.123456789012345678901}', '{"x":1e-999}', '{broken'])
@@ -85,11 +85,11 @@ def test_format_preserved(tmp_path):
 def test_external_conflict_preserves_edits(tmp_path):
     doc = create(tmp_path, {'name': 'before'})
     doc.edit(doc.fields[0], 'after')
-    doc.path.write_text('{"external": true}')
+    doc.path.write_text('{"external": true}', encoding='utf-8')
     with pytest.raises(ValueError, match='外部修改'):
         doc.save()
     assert doc.edits
-    assert doc.path.read_text() == '{"external": true}'
+    assert doc.path.read_text(encoding='utf-8-sig') == '{"external": true}'
 
 
 @pytest.mark.parametrize('failure', ['replace', 'fsync', 'NamedTemporaryFile'])
@@ -109,8 +109,8 @@ def test_write_failure_preserves_original_and_retry(tmp_path, failure):
 def test_scan_nested_symlinks_errors(tmp_path):
     child = tmp_path / '中文'
     child.mkdir()
-    (child / 'a.JSON').write_text('{}')
-    (tmp_path / 'ignore.txt').write_text('{}')
+    (child / 'a.JSON').write_text('{}', encoding='utf-8')
+    (tmp_path / 'ignore.txt').write_text('{}', encoding='utf-8')
     try:
         (tmp_path / 'cycle').symlink_to(tmp_path, target_is_directory=True)
         (tmp_path / 'alias.json').symlink_to(child / 'a.JSON')
@@ -131,7 +131,7 @@ def test_sessions_independent_and_partial_save(tmp_path):
     first.edit(first.fields[0], 'new one')
     second.edit(second.fields[0], 'new two')
     assert not first.matching(re.compile('no-match'))
-    second.path.write_text('external')
+    second.path.write_text('external', encoding='utf-8')
     assert first.save() == 1
     with pytest.raises(ValueError):
         second.save()
@@ -142,11 +142,11 @@ def test_root_string_and_embedded_root_string(tmp_path):
     doc = create(tmp_path, 'original')
     doc.edit(doc.fields[0], 'changed')
     doc.save()
-    assert json.loads(doc.path.read_text()) == 'changed'
+    assert json.loads(doc.path.read_text(encoding='utf-8-sig')) == 'changed'
     doc = create(tmp_path, {'annotation': {'result': '"original"'}})
     doc.edit(doc.fields[0], 'changed')
     doc.save()
-    assert json.loads(json.loads(doc.path.read_text())['annotation']['result']) == 'changed'
+    assert json.loads(json.loads(doc.path.read_text(encoding='utf-8-sig'))['annotation']['result']) == 'changed'
 
 
 def test_invalid_encoding(tmp_path):
@@ -173,5 +173,5 @@ def test_internal_compact_and_outer_no_trailing_newline(tmp_path):
     doc.edit(doc.fields[0], '新')
     doc.save()
     assert not doc.path.read_bytes().endswith(b'\n')
-    inner = json.loads(doc.path.read_text())['annotation']['result']
+    inner = json.loads(doc.path.read_text(encoding='utf-8-sig'))['annotation']['result']
     assert inner == '{"label":"新","number":1}'

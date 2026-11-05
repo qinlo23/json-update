@@ -13,6 +13,29 @@ uv run json-update
 
 也可使用 Python 虚拟环境执行 `pip install -e .`，然后运行 `json-update` 或 `python -m json_update`。
 
+## Linux 虚拟机中预览界面
+
+通过 VS Code Remote SSH 开发时，桌面窗口不会自动出现在 VS Code 中。应用需要 Linux 图形会话（X11 或 Wayland）。
+
+如果虚拟机已有桌面，打开虚拟机控制台，登录桌面，在**桌面内的终端**执行：
+
+```sh
+cd /home/qinlo/cjet/json-update
+uv sync
+uv run json-update
+```
+
+Ubuntu 如报 `libGL.so.1` 缺失，先安装 Qt 图形库：
+
+```sh
+sudo apt-get update
+sudo apt-get install -y libgl1 libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x11-0
+```
+
+如果虚拟机只有 SSH、没有桌面，可以配置远程桌面，或在本机安装 X Server 后使用 `ssh -X 用户名@虚拟机地址` 开启 X11 转发（服务端需允许 X11Forwarding 并安装 xauth）。在该 SSH 会话中运行 `uv run json-update`。不要仅手动设置 `DISPLAY=:0`，它不能创建图形会话。
+
+`QT_QPA_PLATFORM=offscreen` 只用于自动测试，不会显示可交互窗口。首次预览建议使用复制的 JSON 样本；点击保存会写回所选原文件。
+
 ## 使用
 
 1. 选择主目录，后台递归扫描 `.json` 文件。不跟随目录或文件符号链接。
