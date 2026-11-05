@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         self.after_save = None
         self.errors = []
         self.field_pattern = re.compile('^label$')
-        self.file_pattern = re.compile('')
+        self.file_pattern = re.compile(r'^.*left.*\.json$')
 
         shell = QWidget()
         outer = QVBoxLayout(shell)
@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.choose)
         layout.addLayout(row)
         layout.addWidget(QLabel('JSON 文件筛选正则（匹配相对路径）'))
-        self.file_regex = QPlainTextEdit()
+        self.file_regex = QPlainTextEdit(r'^.*left.*\.json$')
         self.file_regex.setPlaceholderText(r'.*config.*\.json$；留空匹配所有文件')
         self.file_regex.setMaximumHeight(90)
         layout.addWidget(self.file_regex)

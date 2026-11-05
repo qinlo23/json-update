@@ -40,6 +40,8 @@ def test_edit_switch_filter_save(app, tmp_path, monkeypatch):
     for name in ('one', 'two'):
         (tmp_path / f'{name}.json').write_text(json.dumps({'label': name}), encoding='utf-8')
     window = MainWindow()
+    window.file_regex.clear()  # These scenarios exercise all fixture files.
+    window.timer.stop()
     monkeypatch.setattr(QMessageBox, 'information', lambda *args: None)
     window.set_root(tmp_path)
     wait_for(app, lambda: window.files.count() == 2 and not window.workers)
@@ -70,6 +72,8 @@ def test_invalid_regex_stale_scan_and_bad_file(app, tmp_path):
     (tmp_path / 'good.json').write_text('{"label":"ok"}', encoding='utf-8')
     (tmp_path / 'bad.json').write_text('{', encoding='utf-8')
     window = MainWindow()
+    window.file_regex.clear()  # These scenarios exercise all fixture files.
+    window.timer.stop()
     window.set_root(tmp_path)
     wait_for(app, lambda: not window.workers)
     assert window.files.count() == 1 and window.errors
@@ -88,6 +92,8 @@ def test_invalid_regex_stale_scan_and_bad_file(app, tmp_path):
 def test_unsaved_prompt_choices(app, tmp_path, monkeypatch, choice):
     (tmp_path / 'data.json').write_text('{"label":"old"}', encoding='utf-8')
     window = MainWindow()
+    window.file_regex.clear()  # These scenarios exercise all fixture files.
+    window.timer.stop()
     window.set_root(tmp_path)
     wait_for(app, lambda: not window.workers)
     window.scroll.widget().findChild(QPlainTextEdit).setPlainText('new')
@@ -111,6 +117,8 @@ def test_partial_failure_keeps_edits_and_blocks_continuation(app, tmp_path, monk
     for name in ('one', 'two'):
         (tmp_path / f'{name}.json').write_text('{"label":"old"}', encoding='utf-8')
     window = MainWindow()
+    window.file_regex.clear()  # These scenarios exercise all fixture files.
+    window.timer.stop()
     window.set_root(tmp_path)
     wait_for(app, lambda: not window.workers)
     for doc in window.documents.values():
@@ -132,6 +140,8 @@ def test_grouped_label_input_edits_current_file_without_dialog(app, tmp_path):
     for name in ('one', 'two'):
         (tmp_path / f'{name}.json').write_text(json.dumps(source, ensure_ascii=False), encoding='utf-8')
     window = MainWindow()
+    window.file_regex.clear()  # These scenarios exercise all fixture files.
+    window.timer.stop()
     window.set_root(tmp_path)
     wait_for(app, lambda: not window.workers)
     current = window.documents[window.current]
