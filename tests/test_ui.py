@@ -127,10 +127,7 @@ def test_partial_failure_keeps_edits_and_blocks_continuation(app, tmp_path, monk
     stop(window, app)
 
 
-@pytest.mark.parametrize('accept', [True, False])
-def test_batch_label_dialog_current_file_and_staging(app, tmp_path, monkeypatch, accept):
-    from PySide6.QtWidgets import QComboBox, QDialog
-
+def test_grouped_label_input_edits_current_file_without_dialog(app, tmp_path):
     source = {'items': [{'label': '摆放物品'}, {'label': '摆放物品'}, {'label': '椅子推归位'}]}
     for name in ('one', 'two'):
         (tmp_path / f'{name}.json').write_text(json.dumps(source, ensure_ascii=False), encoding='utf-8')
@@ -139,21 +136,20 @@ def test_batch_label_dialog_current_file_and_staging(app, tmp_path, monkeypatch,
     wait_for(app, lambda: not window.workers)
     current = window.documents[window.current]
     original = current.path.read_bytes()
-    assert window.batch_button.isEnabled()
-
-    def edit_dialog(dialog):
-        choices = dialog.findChild(QComboBox, 'label_choices')
-        choices.setCurrentIndex(choices.findData('摆放物品'))
-        assert '2 处' in choices.currentText()
-        dialog.findChild(QPlainTextEdit, 'label_replacement').setPlainText('整理物品')
-        return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
-
-    monkeypatch.setattr(QDialog, 'exec', edit_dialog)
-    window.batch_replace_labels()
-    assert len(current.edits) == (2 if accept else 0)
+    editors = window.scroll.widget().findChildren(QPlainTextEdit)
+    assert len(editors) == 2
+    assert editors[0].toPlainText() == '摆放物品'
+    editors[0].setPlainText('整理物品')
+    editors[0].setPlainText('整理完成')
+    assert len(current.edits) == 2
+    assert len(current.label_groups()['整理完成']) == 2
     assert current.path.read_bytes() == original
     assert all(not doc.edits for doc in window.documents.values() if doc is not current)
-    if accept:
-        assert len(current.label_groups()['整理物品']) == 2
-        assert window.files.currentItem().text().startswith('* ')
+    assert window.files.currentItem().text().startswith('* ')
+    window.files.setCurrentRow(1)
+    window.files.setCurrentRow(0)
+    editors = window.scroll.widget().findChildren(QPlainTextEdit)
+    assert len(editors) == 2 and editors[0].toPlainText() == '整理完成'
+    editors[0].setPlainText('摆放物品')
+    assert not current.edits
     stop(window, app)

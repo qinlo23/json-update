@@ -6,7 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
     QScrollArea, QSplitter, QVBoxLayout, QWidget,
 )
@@ -120,10 +120,6 @@ class MainWindow(QMainWindow):
         self.heading = QLabel('选择目录后，点击左侧文件开始编辑')
         self.heading.setWordWrap(True)
         editor_layout.addWidget(self.heading)
-        self.batch_button = QPushButton('批量修改同名标签（当前文件）')
-        self.batch_button.setEnabled(False)
-        self.batch_button.clicked.connect(self.batch_replace_labels)
-        editor_layout.addWidget(self.batch_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         editor_layout.addWidget(self.scroll, 1)
@@ -150,55 +146,6 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.refresh)
         self.file_regex.textChanged.connect(self.schedule_refresh)
         self.field_regex.textChanged.connect(self.schedule_refresh)
-
-    def batch_replace_labels(self):
-        if self.current is None or self.saving:
-            return
-        doc = self.documents[self.current]
-        groups = doc.label_groups()
-        if not groups:
-            return
-        dialog = QDialog(self)
-        dialog.setWindowTitle('批量修改同名标签 — 当前文件')
-        dialog.resize(520, 340)
-        layout = QVBoxLayout(dialog)
-        explanation = QLabel('作用于当前文件全部同名 label 字段，包含字段筛选隐藏的标签。')
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        layout.addWidget(QLabel('选择原标签（按当前暂存值统计）'))
-        choices = QComboBox()
-        choices.setObjectName('label_choices')
-        for value, targets in groups.items():
-            preview = value.replace('\n', ' ') or '（空标签）'
-            choices.addItem(f'{preview}（{len(targets)} 处）', value)
-        layout.addWidget(choices)
-        layout.addWidget(QLabel('新标签'))
-        replacement = QPlainTextEdit()
-        replacement.setObjectName('label_replacement')
-        layout.addWidget(replacement)
-        count = QLabel()
-        layout.addWidget(count)
-        def selected_changed():
-            value = choices.currentData()
-            replacement.setPlainText(value)
-            count.setText(f'将更新当前文件中的 {len(groups[value])} 处标签；其他文件不受影响。')
-        choices.currentIndexChanged.connect(selected_changed)
-        selected_changed()
-        buttons = QDialogButtonBox()
-        buttons.addButton('应用修改', QDialogButtonBox.ButtonRole.AcceptRole)
-        buttons.addButton('取消', QDialogButtonBox.ButtonRole.RejectRole)
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        changed = doc.replace_label(choices.currentData(), replacement.toPlainText())
-        item = self.files.currentItem()
-        if item is not None:
-            self.update_item(item)
-            self.select_file(item)
-        self.update_status()
-        self.status.setText(self.status.text() + f'；本次批量修改 {changed} 处标签（尚未保存）')
 
     def clear_editor(self):
         content = QWidget()
@@ -239,7 +186,6 @@ class MainWindow(QMainWindow):
         self.root = root
         self.documents.clear()
         self.current = None
-        self.batch_button.setEnabled(False)
         self.directory.setText(str(root))
         self.files.clear()
         self.clear_editor()
@@ -316,7 +262,6 @@ class MainWindow(QMainWindow):
             self.current = None
             self.clear_editor()
             self.heading.setText('没有匹配的字符串字段')
-            self.batch_button.setEnabled(False)
         else:
             self.select_file(selected)
         self.error_button.setText(f'查看错误 ({len(self.errors)})')
@@ -338,30 +283,37 @@ class MainWindow(QMainWindow):
             return
         self.current = item.data(Qt.ItemDataRole.UserRole)
         doc = self.documents[self.current]
-        fields = doc.matching(self.field_pattern)
-        self.batch_button.setEnabled(bool(doc.label_groups()))
-        self.heading.setText(f'{self.current.relative_to(self.root).as_posix()} — {len(fields)} 个字段')
+        groups = doc.editor_groups(self.field_pattern)
+        field_count = sum(len(group) for group in groups)
+        self.heading.setText(f'{self.current.relative_to(self.root).as_posix()} — '
+                             f'{len(groups)} 个编辑项 / {field_count} 个字段')
         self.clear_editor()
-        for target in fields:
-            label = QLabel(target.name)
+        for targets in groups:
+            target = targets[0]
+            value = doc.edits.get(target, target.original)
+            title = f'{value or "（空标签）"}（{len(targets)} 处）' if target.name == 'label' else target.name
+            label = QLabel(title)
+            label.setWordWrap(True)
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setStyleSheet('font-weight: bold')
             self.fields_layout.addWidget(label)
-            path_label = QLabel(target.path)
+            path_label = QLabel(target.path if len(targets) == 1 else
+                                f'同名标签共 {len(targets)} 处，修改此输入框将全部同步（悬停查看路径）')
+            path_label.setToolTip('\n'.join(f.path for f in targets))
             path_label.setTextFormat(Qt.TextFormat.PlainText)
             path_label.setWordWrap(True)
             path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             self.fields_layout.addWidget(path_label)
             editor = QPlainTextEdit()
-            editor.setPlainText(doc.edits.get(target, target.original))
+            editor.setPlainText(value)
             editor.setMinimumHeight(75)
             editor.setMaximumHeight(150)
-            editor.textChanged.connect(lambda d=doc, f=target, e=editor: self.record_edit(d, f, e))
+            editor.textChanged.connect(lambda d=doc, group=targets, e=editor: self.record_edit(d, group, e))
             self.fields_layout.addWidget(editor)
         self.fields_layout.addStretch()
 
-    def record_edit(self, doc, target, editor):
-        doc.edit(target, editor.toPlainText())
+    def record_edit(self, doc, targets, editor):
+        doc.edit_group(targets, editor.toPlainText())
         for index in range(self.files.count()):
             item = self.files.item(index)
             if item.data(Qt.ItemDataRole.UserRole) == doc.path:

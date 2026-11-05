@@ -161,13 +161,24 @@ class Document:
                 groups.setdefault(self.edits.get(target, target.original), []).append(target)
         return groups
 
-    def replace_label(self, old: str, new: str) -> int:
-        targets = self.label_groups().get(old, [])
-        if old == new:
-            return 0
+    def editor_groups(self, pattern: re.Pattern) -> list[list[Field]]:
+        """One editor per current label value, with fixed targets while typing."""
+        labels = self.label_groups()
+        seen = set()
+        groups = []
+        for target in self.matching(pattern):
+            if target.name != 'label':
+                groups.append([target])
+                continue
+            value = self.edits.get(target, target.original)
+            if value not in seen:
+                seen.add(value)
+                groups.append(labels[value])
+        return groups
+
+    def edit_group(self, targets: list[Field], value: str):
         for target in targets:
-            self.edit(target, new)
-        return len(targets)
+            self.edit(target, value)
 
     def render(self) -> bytes:
         data, inner = copy.deepcopy(self.data), copy.deepcopy(self.embedded)

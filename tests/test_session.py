@@ -177,36 +177,37 @@ def test_internal_compact_and_outer_no_trailing_newline(tmp_path):
     assert inner == '{"label":"新","number":1}'
 
 
-def test_replace_repeated_labels_in_current_file_only(tmp_path):
-    inner = {'videoSegmentTool': {'result': [
-        {'label': '摆放物品', 'start': 1}, {'label': '椅子推归位', 'start': 2},
-        {'label': '摆放物品', 'start': 3}, {'label': '摆放物品补充', 'start': 4}]}}
-    doc = create(tmp_path, {'annotation': {'result': json.dumps(inner)},
-                            'description': '摆放物品', 'label': '摆放物品'})
+def test_grouped_labels_edit_all_occurrences_and_save(tmp_path):
+    inner = {'result': [{'label': '摆放物品'}, {'label': '摆放物品'}, {'label': '椅子推归位'}]}
+    doc = create(tmp_path, {'annotation': {'result': json.dumps(inner)}, 'description': '摆放物品'})
     other = create(tmp_path, {'label': '摆放物品'}, 'other.json')
-    assert len(doc.label_groups()['摆放物品']) == 3
+    groups = doc.editor_groups(re.compile('^label$'))
+    assert [len(g) for g in groups] == [2, 1]
     raw = doc.path.read_bytes()
-    assert doc.replace_label('摆放物品', '整理物品') == 3
-    assert doc.path.read_bytes() == raw  # Changes are staged, not written immediately.
-    assert not other.edits
-    assert doc.replace_label('不存在', '新') == 0
-    assert doc.replace_label('整理物品', '整理物品') == 0
-    assert doc.save() == 3
-    saved = json.loads(doc.path.read_text(encoding='utf-8'))
-    assert saved['label'] == '整理物品'
-    assert saved['description'] == '摆放物品'
-    labels = [part['label'] for part in json.loads(saved['annotation']['result'])['videoSegmentTool']['result']]
-    assert labels == ['整理物品', '椅子推归位', '整理物品', '摆放物品补充']
-
-
-def test_replace_labels_uses_staged_values_and_can_revert(tmp_path):
-    doc = create(tmp_path, [{'label': '旧'}, {'label': '旧'}, {'label': '另一个'}])
-    doc.edit(doc.fields[0], '单独修改')
-    assert doc.replace_label('旧', '新') == 1
+    doc.edit_group(groups[0], '整理物品')
+    doc.edit_group(groups[0], '整理物品完成')  # Further keystrokes keep the same targets.
     assert len(doc.edits) == 2
-    assert doc.replace_label('新', '旧') == 1
-    assert len(doc.edits) == 1
-    assert doc.replace_label('单独修改', '旧') == 1
+    assert doc.path.read_bytes() == raw and not other.edits
+    assert doc.save() == 2
+    saved = json.loads(doc.path.read_text(encoding='utf-8'))
+    assert saved['description'] == '摆放物品'
+    assert [x['label'] for x in json.loads(saved['annotation']['result'])['result']] == [
+        '整理物品完成', '整理物品完成', '椅子推归位']
+
+
+def test_grouped_labels_revert_merge_and_hidden_occurrences(tmp_path):
+    doc = create(tmp_path, [{'label': '旧'}, {'label': '旧'}, {'label': '另一个'}, {'description': '旧'}])
+    groups = doc.editor_groups(re.compile('^label$'))
+    doc.edit_group(groups[0], '')
+    assert len(doc.edits) == 2
+    doc.edit_group(groups[0], '旧')
     assert not doc.edits
-    assert doc.replace_label('旧', '') == 2
-    assert len(doc.label_groups()['']) == 2
+    doc.edit_group(groups[0], '另一个')
+    merged = doc.editor_groups(re.compile('^label$'))
+    assert len(merged) == 1 and len(merged[0]) == 3
+    doc.edit_group(merged[0], '统一')
+    assert len(doc.edits) == 3
+    # A matching label brings all identical occurrences into its editor.
+    assert len(doc.editor_groups(re.compile(r'^\$\[0\]\.label$'))[0]) == 3
+    assert len(doc.editor_groups(re.compile('description'))) == 1
+    assert not doc.editor_groups(re.compile('no-match'))
