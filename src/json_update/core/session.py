@@ -153,6 +153,22 @@ class Document:
         else:
             self.edits[target] = value
 
+    def label_groups(self) -> dict[str, list[Field]]:
+        """Group every label in this document by its current (possibly edited) value."""
+        groups: dict[str, list[Field]] = {}
+        for target in self.fields:
+            if target.name == 'label':
+                groups.setdefault(self.edits.get(target, target.original), []).append(target)
+        return groups
+
+    def replace_label(self, old: str, new: str) -> int:
+        targets = self.label_groups().get(old, [])
+        if old == new:
+            return 0
+        for target in targets:
+            self.edit(target, new)
+        return len(targets)
+
     def render(self) -> bytes:
         data, inner = copy.deepcopy(self.data), copy.deepcopy(self.embedded)
         for target, value in self.edits.items():

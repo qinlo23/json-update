@@ -175,3 +175,38 @@ def test_internal_compact_and_outer_no_trailing_newline(tmp_path):
     assert not doc.path.read_bytes().endswith(b'\n')
     inner = json.loads(doc.path.read_text(encoding='utf-8-sig'))['annotation']['result']
     assert inner == '{"label":"新","number":1}'
+
+
+def test_replace_repeated_labels_in_current_file_only(tmp_path):
+    inner = {'videoSegmentTool': {'result': [
+        {'label': '摆放物品', 'start': 1}, {'label': '椅子推归位', 'start': 2},
+        {'label': '摆放物品', 'start': 3}, {'label': '摆放物品补充', 'start': 4}]}}
+    doc = create(tmp_path, {'annotation': {'result': json.dumps(inner)},
+                            'description': '摆放物品', 'label': '摆放物品'})
+    other = create(tmp_path, {'label': '摆放物品'}, 'other.json')
+    assert len(doc.label_groups()['摆放物品']) == 3
+    raw = doc.path.read_bytes()
+    assert doc.replace_label('摆放物品', '整理物品') == 3
+    assert doc.path.read_bytes() == raw  # Changes are staged, not written immediately.
+    assert not other.edits
+    assert doc.replace_label('不存在', '新') == 0
+    assert doc.replace_label('整理物品', '整理物品') == 0
+    assert doc.save() == 3
+    saved = json.loads(doc.path.read_text(encoding='utf-8'))
+    assert saved['label'] == '整理物品'
+    assert saved['description'] == '摆放物品'
+    labels = [part['label'] for part in json.loads(saved['annotation']['result'])['videoSegmentTool']['result']]
+    assert labels == ['整理物品', '椅子推归位', '整理物品', '摆放物品补充']
+
+
+def test_replace_labels_uses_staged_values_and_can_revert(tmp_path):
+    doc = create(tmp_path, [{'label': '旧'}, {'label': '旧'}, {'label': '另一个'}])
+    doc.edit(doc.fields[0], '单独修改')
+    assert doc.replace_label('旧', '新') == 1
+    assert len(doc.edits) == 2
+    assert doc.replace_label('新', '旧') == 1
+    assert len(doc.edits) == 1
+    assert doc.replace_label('单独修改', '旧') == 1
+    assert not doc.edits
+    assert doc.replace_label('旧', '') == 2
+    assert len(doc.label_groups()['']) == 2

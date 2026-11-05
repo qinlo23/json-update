@@ -52,7 +52,7 @@ sudo apt-get install -y libgl1 libegl1 libopengl0 libxcb-cursor0 libxkbcommon-x1
 $.annotation.result::<json>.videoSegmentTool.result[0].label
 ```
 
-输入 `^label$` 可逐条修改视频片段标签。保存后 `annotation.result` 仍是字符串；其他 JSON 字符串不自动解析。内部 JSON 无效时，该字段不展示，其他普通字段仍可编辑。只编辑字符串，不提供同值批量替换。
+输入 `^label$` 可逐条修改视频片段标签。保存后 `annotation.result` 仍是字符串；其他 JSON 字符串不自动解析。内部 JSON 无效时，该字段不展示，其他普通字段仍可编辑。只编辑字符串。右侧「批量修改同名标签（当前文件）」可选择旧标签并输入新标签，一次修改该文件全部同名 `label` 字段（包括字段筛选隐藏的标签），随后点击「完成并保存」写回。统计以当前暂存值为准，精确匹配整段标签，不替换子串、不修改其他文件。仍可使用独立输入框逐条编辑。
 
 ## 保存行为与限制
 
