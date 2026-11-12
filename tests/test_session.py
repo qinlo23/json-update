@@ -100,7 +100,7 @@ def test_backup_failure_preserves_original_and_retry(tmp_path):
             doc.save()
     assert doc.path.read_bytes() == doc.raw
     assert doc.edits
-    assert not doc.path.with_name('data.json.bak').exists()
+    assert not doc.path.with_name('data-副本.json').exists()
     assert doc.save() == 1
 
 
@@ -109,7 +109,7 @@ def test_backup_once_across_reload_and_in_place_truncate(tmp_path):
     raw = doc.raw
     inode = doc.path.stat().st_ino
     assert doc.save() == 0
-    backup = doc.path.with_name('data.json.bak')
+    backup = doc.path.with_name('data-副本.json')
     assert not backup.exists()
     for value in ('second', 'x'):
         doc.edit(doc.fields[0], value)
@@ -125,7 +125,7 @@ def test_backup_once_across_reload_and_in_place_truncate(tmp_path):
 @pytest.mark.parametrize('kind', ['directory', 'symlink'])
 def test_invalid_backup_path(tmp_path, kind):
     doc = create(tmp_path, {'label': 'old'})
-    backup = doc.path.with_name('data.json.bak')
+    backup = doc.path.with_name('data-副本.json')
     if kind == 'directory':
         backup.mkdir()
     else:
@@ -142,7 +142,7 @@ def test_invalid_backup_path(tmp_path, kind):
 @pytest.mark.parametrize('existing_directory', [True, False])
 def test_backup_permission_error_on_windows(tmp_path, existing_directory):
     doc = create(tmp_path, {'label': 'old'})
-    backup = doc.path.with_name('data.json.bak')
+    backup = doc.path.with_name('data-副本.json')
     if existing_directory:
         backup.mkdir()
     else:
@@ -168,7 +168,7 @@ def test_backup_permission_error_on_windows(tmp_path, existing_directory):
 
 def test_write_failure_keeps_backup_and_edits(tmp_path):
     doc = create(tmp_path, {'label': 'old'})
-    backup = doc.path.with_name('data.json.bak')
+    backup = doc.path.with_name('data-副本.json')
     backup.write_bytes(doc.raw)
     doc.edit(doc.fields[0], 'new')
     with patch('json_update.core.session.os.fsync', side_effect=OSError('模拟失败')):
@@ -315,7 +315,7 @@ def test_partial_write_keeps_original_backup_and_pending_edits(tmp_path):
         with pytest.raises(OSError, match='部分写入'):
             doc.save()
     assert doc.path.read_bytes() != doc.raw
-    assert doc.path.with_name('data.json.bak').read_bytes() == doc.raw
+    assert doc.path.with_name('data-副本.json').read_bytes() == doc.raw
     assert doc.edits
 
 
@@ -334,4 +334,19 @@ def test_backup_creation_denied_stops_save(tmp_path):
             doc.save()
     assert doc.path.read_bytes() == doc.raw
     assert doc.edits
-    assert not doc.path.with_name('data.json.bak').exists()
+    assert not doc.path.with_name('data-副本.json').exists()
+
+
+@pytest.mark.parametrize('name', ['data.json', '数据.JSON', 'data.v1.json'])
+def test_backup_name_preserves_extension_and_scan_excludes_copies(tmp_path, name):
+    doc = create(tmp_path, {'label': 'old'}, name)
+    raw = doc.raw
+    doc.edit(doc.fields[0], 'new')
+    doc.save()
+    backup = doc.path.with_name(doc.path.stem + '-副本' + doc.path.suffix)
+    assert backup.read_bytes() == raw
+    assert scan(tmp_path)[0] == [doc.path]
+    doc.edit(doc.fields[0], 'again')
+    doc.save()
+    assert backup.read_bytes() == raw
+    assert len(list(tmp_path.iterdir())) == 2

@@ -217,7 +217,7 @@ class Document:
         return count
 
     def _ensure_backup(self):
-        backup = self.path.with_name(self.path.name + '.bak')
+        backup = self.path.with_name(self.path.stem + '-副本' + self.path.suffix)
         try:
             stream = backup.open('xb')
         except OSError as exc:
@@ -252,7 +252,8 @@ def scan(root: Path, cancelled=lambda: False):
         dirs[:] = sorted(d for d in dirs if not Path(directory, d).is_symlink())
         for name in sorted(files):
             path = Path(directory, name)
-            if path.suffix.lower() != '.json' or path.is_symlink():
+            if (path.suffix.lower() != '.json' or path.stem.endswith('-副本')
+                    or path.is_symlink()):
                 continue
             try:
                 normalized = os.path.normcase(str(path.resolve()))
