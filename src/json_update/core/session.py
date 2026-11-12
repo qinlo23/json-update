@@ -220,10 +220,18 @@ class Document:
         backup = self.path.with_name(self.path.name + '.bak')
         try:
             stream = backup.open('xb')
-        except FileExistsError:
-            if backup.is_symlink() or not stat.S_ISREG(backup.stat().st_mode):
-                raise ValueError('备份路径必须是普通文件，不能是目录或符号链接')
-            return
+        except OSError as exc:
+            # Windows may report PermissionError for an existing directory.
+            # Inspect the entry itself so dangling symlinks are rejected too.
+            try:
+                mode = backup.lstat().st_mode
+            except FileNotFoundError:
+                raise exc
+            if not stat.S_ISREG(mode):
+                raise ValueError('备份路径必须是普通文件，不能是目录或符号链接') from exc
+            if isinstance(exc, FileExistsError):
+                return
+            raise
         try:
             with stream:
                 stream.write(self.raw)

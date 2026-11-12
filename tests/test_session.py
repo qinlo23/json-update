@@ -139,6 +139,33 @@ def test_invalid_backup_path(tmp_path, kind):
     assert doc.path.read_bytes() == doc.raw and doc.edits
 
 
+@pytest.mark.parametrize('existing_directory', [True, False])
+def test_backup_permission_error_on_windows(tmp_path, existing_directory):
+    doc = create(tmp_path, {'label': 'old'})
+    backup = doc.path.with_name('data.json.bak')
+    if existing_directory:
+        backup.mkdir()
+    else:
+        backup.write_bytes(doc.raw)
+    doc.edit(doc.fields[0], 'new')
+    original_open = Path.open
+
+    def open_file(path, mode='r', *args, **kwargs):
+        if path == backup and mode == 'xb':
+            raise PermissionError('模拟 Windows 拒绝访问')
+        return original_open(path, mode, *args, **kwargs)
+
+    expected = ValueError if existing_directory else PermissionError
+    with patch.object(Path, 'open', open_file):
+        with pytest.raises(expected):
+            doc.save()
+    assert doc.path.read_bytes() == doc.raw and doc.edits
+    if existing_directory:
+        assert backup.is_dir()
+    else:
+        assert backup.read_bytes() == doc.raw
+
+
 def test_write_failure_keeps_backup_and_edits(tmp_path):
     doc = create(tmp_path, {'label': 'old'})
     backup = doc.path.with_name('data.json.bak')
