@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox, QPlainTextEdit
 
 from json_update.ui.main_window import MainWindow
+from json_update.ui.error_dialog import ErrorDialog
 
 
 @pytest.fixture
@@ -124,7 +125,7 @@ def test_partial_failure_keeps_edits_and_blocks_continuation(app, tmp_path, monk
     for doc in window.documents.values():
         doc.edit(doc.fields[0], 'new')
     (tmp_path / 'two.json').write_text('{"label":"external"}', encoding='utf-8')
-    monkeypatch.setattr(QMessageBox, 'exec', lambda *args: None)
+    monkeypatch.setattr(ErrorDialog, 'exec', lambda *args: None)
     continued = []
     window.save_all(lambda: continued.append(True))
     wait_for(app, lambda: not window.saving)
@@ -132,6 +133,10 @@ def test_partial_failure_keeps_edits_and_blocks_continuation(app, tmp_path, monk
     assert window.dirty()[0].path.name == 'two.json'
     assert not continued
     assert window.errors
+    for index in range(window.files.count()):
+        item = window.files.item(index)
+        expected = '#b58100' if item.data(Qt.ItemDataRole.UserRole).name == 'two.json' else '#16803c'
+        assert item.foreground().color().name() == expected
     stop(window, app)
 
 
@@ -163,3 +168,88 @@ def test_grouped_label_input_edits_current_file_without_dialog(app, tmp_path):
     editors[0].setPlainText('摆放物品')
     assert not current.edits
     stop(window, app)
+
+
+def test_file_colors_and_session_reset(app, tmp_path, monkeypatch):
+    (tmp_path / 'data.json').write_text('{"label":"old"}', encoding='utf-8')
+    monkeypatch.setattr(QMessageBox, 'information', lambda *args: None)
+    window = MainWindow()
+    window.file_regex.clear()
+    window.timer.stop()
+    window.set_root(tmp_path)
+    wait_for(app, lambda: not window.workers)
+    assert window.files.item(0).foreground().style() == Qt.BrushStyle.NoBrush
+    editor = window.scroll.widget().findChild(QPlainTextEdit)
+    editor.setPlainText('new')
+    assert window.files.item(0).foreground().color().name() == '#b58100'
+    editor.setPlainText('old')
+    assert window.files.item(0).foreground().style() == Qt.BrushStyle.NoBrush
+    editor.setPlainText('new')
+    window.save_all()
+    wait_for(app, lambda: not window.saving)
+    assert window.files.item(0).foreground().color().name() == '#16803c'
+    editor = window.scroll.widget().findChild(QPlainTextEdit)
+    editor.setPlainText('again')
+    assert window.files.item(0).foreground().color().name() == '#b58100'
+    editor.setPlainText('new')
+    assert window.files.item(0).foreground().color().name() == '#16803c'
+    window.refresh()
+    wait_for(app, lambda: not window.workers)
+    assert window.files.item(0).foreground().color().name() == '#16803c'
+    window.file_regex.setPlainText('no-files')
+    window.timer.stop()
+    window.refresh()
+    wait_for(app, lambda: not window.workers)
+    assert window.files.count() == 0
+    window.file_regex.clear()
+    window.timer.stop()
+    window.refresh()
+    wait_for(app, lambda: not window.workers)
+    assert window.files.item(0).foreground().color().name() == '#16803c'
+    window.set_root(tmp_path)
+    wait_for(app, lambda: not window.workers)
+    assert window.files.item(0).foreground().style() == Qt.BrushStyle.NoBrush
+    stop(window, app)
+
+
+def test_error_dialog_details_copy_and_fullscreen(app):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QPushButton
+
+    errors = ['<b>纯文本</b> ' + '很长的错误' * 100] * 100
+    dialog = ErrorDialog('错误', '共 100 项错误', errors)
+    dialog.show()
+    app.processEvents()
+    assert dialog.details.isReadOnly()
+    assert dialog.details.toPlainText() == '\n'.join(errors)
+    assert dialog.details.verticalScrollBar().maximum() > 0
+    assert dialog.windowFlags() & Qt.WindowType.WindowMaximizeButtonHint
+    available = dialog.screen().availableGeometry()
+    assert dialog.width() <= available.width() * .9
+    assert dialog.height() <= available.height() * .9
+    next(b for b in dialog.findChildren(QPushButton) if b.text() == '复制全部').click()
+    assert app.clipboard().text() == '\n'.join(errors)
+    dialog.resize(500, 400)
+    app.processEvents()
+    assert dialog.size().width() == 500
+    dialog.showMaximized()
+    app.processEvents()
+    dialog.details.setFocus()
+    QTest.keyClick(dialog.details, Qt.Key.Key_F11)
+    app.processEvents()
+    assert dialog.isFullScreen()
+    QTest.keyClick(dialog.details, Qt.Key.Key_Escape)
+    app.processEvents()
+    assert not dialog.isFullScreen() and dialog.isMaximized()
+    assert dialog.isVisible()
+    dialog.showNormal()
+    app.processEvents()
+    dialog.fullscreen_button.click()
+    assert dialog.isFullScreen()
+    dialog.fullscreen_button.click()
+    assert not dialog.isFullScreen() and not dialog.isMaximized()
+    dialog.close()
+    empty = ErrorDialog('错误', '共 0 项错误', [])
+    assert empty.details.toPlainText() == '没有错误。'
+    empty.deleteLater()
+    dialog.deleteLater()

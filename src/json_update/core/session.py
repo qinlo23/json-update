@@ -5,7 +5,6 @@ import json
 import os
 import re
 import stat
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -204,24 +203,35 @@ class Document:
         if self.path.read_bytes() != self.raw:
             raise ValueError('文件已被外部修改，请保留当前编辑并重新加载文件')
         count = len(self.edits)
-        temporary = None
-        try:
-            mode = stat.S_IMODE(self.path.stat().st_mode)
-            with tempfile.NamedTemporaryFile(dir=self.path.parent, prefix='.json-update-',
-                                             suffix='.tmp', delete=False) as stream:
-                temporary = Path(stream.name)
-                stream.write(output)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.chmod(temporary, mode)
-            if self.path.read_bytes() != self.raw:
-                raise ValueError('文件在保存期间被外部修改')
-            os.replace(temporary, self.path)
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        self._ensure_backup()
+        if self.path.is_symlink():
+            raise ValueError('不覆盖符号链接文件')
+        if self.path.read_bytes() != self.raw:
+            raise ValueError('文件在保存期间被外部修改')
+        with self.path.open('r+b') as stream:
+            stream.write(output)
+            stream.truncate()
+            stream.flush()
+            os.fsync(stream.fileno())
         self.__dict__.update(fresh.__dict__)
         return count
+
+    def _ensure_backup(self):
+        backup = self.path.with_name(self.path.name + '.bak')
+        try:
+            stream = backup.open('xb')
+        except FileExistsError:
+            if backup.is_symlink() or not stat.S_ISREG(backup.stat().st_mode):
+                raise ValueError('备份路径必须是普通文件，不能是目录或符号链接')
+            return
+        try:
+            with stream:
+                stream.write(self.raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except BaseException:
+            backup.unlink(missing_ok=True)
+            raise
 
 
 def scan(root: Path, cancelled=lambda: False):

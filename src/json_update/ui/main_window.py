@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QBrush, QColor, QCloseEvent
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from json_update.core.session import Document, scan
+from json_update.ui.error_dialog import ErrorDialog
 
 
 class ScanWorker(QThread):
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         self.resize(1180, 780)
         self.root = None
         self.documents = {}
+        self.saved_paths = set()
         self.current = None
         self.generation = 0
         self.workers = set()
@@ -109,7 +111,7 @@ class MainWindow(QMainWindow):
         self.field_error.setWordWrap(True)
         self.field_error.setStyleSheet('color: #b42318')
         layout.addWidget(self.field_error)
-        layout.addWidget(QLabel('匹配的 JSON 文件（* 表示未保存）'))
+        layout.addWidget(QLabel('匹配的 JSON 文件（黄色/*：未保存；绿色：本次已保存）'))
         self.files = QListWidget()
         self.files.currentItemChanged.connect(self.select_file)
         layout.addWidget(self.files, 1)
@@ -185,6 +187,7 @@ class MainWindow(QMainWindow):
     def set_root(self, root):
         self.root = root
         self.documents.clear()
+        self.saved_paths.clear()
         self.current = None
         self.directory.setText(str(root))
         self.files.clear()
@@ -271,7 +274,12 @@ class MainWindow(QMainWindow):
         path = item.data(Qt.ItemDataRole.UserRole)
         doc = self.documents[path]
         item.setText(('* ' if doc.edits else '') + path.relative_to(self.root).as_posix())
-        item.setToolTip(str(path))
+        state = '正在修改（未保存）' if doc.edits else (
+            '已修改并保存（本次会话）' if path in self.saved_paths else '未修改')
+        color = QBrush(QColor('#b58100')) if doc.edits else (
+            QBrush(QColor('#16803c')) if path in self.saved_paths else QBrush())
+        item.setForeground(color)
+        item.setToolTip(f'{path}\n{state}')
 
     def update_status(self):
         dirty = self.dirty()
@@ -338,7 +346,7 @@ class MainWindow(QMainWindow):
         for worker in self.workers:
             worker.requestInterruption()
         self.centralWidget().setEnabled(False)
-        self.status.setText('正在安全保存…')
+        self.status.setText('正在备份并保存…')
         self.save_worker = SaveWorker(documents, self)
         self.save_worker.completed.connect(self.save_finished)
         self.save_worker.finished.connect(self.save_worker.deleteLater)
@@ -348,6 +356,7 @@ class MainWindow(QMainWindow):
         self.saving = False
         self.centralWidget().setEnabled(True)
         self.errors.extend(errors)
+        self.saved_paths.update(path for path, _ in successes)
         self.error_button.setText(f'查看错误 ({len(self.errors)})')
         for index in range(self.files.count()):
             self.update_item(self.files.item(index))
@@ -356,10 +365,9 @@ class MainWindow(QMainWindow):
         self.update_status()
         message = f'成功保存 {len(successes)} 个文件，修改 {sum(n for _, n in successes)} 个字段。'
         if errors:
-            box = QMessageBox(QMessageBox.Icon.Warning, '部分文件保存失败',
-                              message + f'\n失败 {len(errors)} 个文件，修改已保留。', parent=self)
-            box.setDetailedText('\n'.join(errors))
-            box.exec()
+            ErrorDialog('部分文件保存失败',
+                        message + f'\n失败 {len(errors)} 个文件，修改已保留。',
+                        errors, self).exec()
         else:
             QMessageBox.information(self, '保存完成', message)
         continuation, self.after_save = self.after_save, None
@@ -367,12 +375,8 @@ class MainWindow(QMainWindow):
             continuation()
 
     def show_errors(self):
-        box = QMessageBox(self)
-        box.setWindowTitle('扫描与保存错误')
-        box.setText(f'共 {len(self.errors)} 项错误。' if self.errors else '没有错误。')
-        if self.errors:
-            box.setDetailedText('\n'.join(self.errors))
-        box.exec()
+        ErrorDialog('扫描与保存错误', f'共 {len(self.errors)} 项错误。',
+                    self.errors, self).exec()
 
     def closeEvent(self, event: QCloseEvent):
         if self.saving:

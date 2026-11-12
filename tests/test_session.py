@@ -92,18 +92,66 @@ def test_external_conflict_preserves_edits(tmp_path):
     assert doc.path.read_text(encoding='utf-8-sig') == '{"external": true}'
 
 
-@pytest.mark.parametrize('failure', ['replace', 'fsync', 'NamedTemporaryFile'])
-def test_write_failure_preserves_original_and_retry(tmp_path, failure):
+def test_backup_failure_preserves_original_and_retry(tmp_path):
     doc = create(tmp_path, {'name': 'before'})
     doc.edit(doc.fields[0], 'after')
-    module = 'tempfile' if failure == 'NamedTemporaryFile' else 'os'
-    with patch(f'json_update.core.session.{module}.{failure}', side_effect=OSError('模拟失败')):
+    with patch('json_update.core.session.os.fsync', side_effect=OSError('模拟失败')):
         with pytest.raises(OSError):
             doc.save()
     assert doc.path.read_bytes() == doc.raw
     assert doc.edits
-    assert not list(tmp_path.glob('.json-update-*'))
+    assert not doc.path.with_name('data.json.bak').exists()
     assert doc.save() == 1
+
+
+def test_backup_once_across_reload_and_in_place_truncate(tmp_path):
+    doc = create(tmp_path, {'name': 'original' * 100})
+    raw = doc.raw
+    inode = doc.path.stat().st_ino
+    assert doc.save() == 0
+    backup = doc.path.with_name('data.json.bak')
+    assert not backup.exists()
+    for value in ('second', 'x'):
+        doc.edit(doc.fields[0], value)
+        output = doc.render()
+        doc.save()
+        assert backup.read_bytes() == raw
+        assert doc.path.read_bytes() == output
+        assert doc.path.stat().st_ino == inode
+        doc = Document.load(doc.path)
+    assert scan(tmp_path)[0] == [doc.path]
+
+
+@pytest.mark.parametrize('kind', ['directory', 'symlink'])
+def test_invalid_backup_path(tmp_path, kind):
+    doc = create(tmp_path, {'label': 'old'})
+    backup = doc.path.with_name('data.json.bak')
+    if kind == 'directory':
+        backup.mkdir()
+    else:
+        try:
+            backup.symlink_to(doc.path)
+        except (OSError, NotImplementedError):
+            pytest.skip('符号链接不可用')
+    doc.edit(doc.fields[0], 'new')
+    with pytest.raises(ValueError, match='备份路径'):
+        doc.save()
+    assert doc.path.read_bytes() == doc.raw and doc.edits
+
+
+def test_write_failure_keeps_backup_and_edits(tmp_path):
+    doc = create(tmp_path, {'label': 'old'})
+    backup = doc.path.with_name('data.json.bak')
+    backup.write_bytes(doc.raw)
+    doc.edit(doc.fields[0], 'new')
+    with patch('json_update.core.session.os.fsync', side_effect=OSError('模拟失败')):
+        with pytest.raises(OSError):
+            doc.save()
+    assert backup.read_bytes() == doc.raw
+    assert doc.edits
+    assert doc.data == {'label': 'old'}
+    with pytest.raises(ValueError, match='外部修改'):
+        doc.save()
 
 
 def test_scan_nested_symlinks_errors(tmp_path):
@@ -211,3 +259,52 @@ def test_grouped_labels_revert_merge_and_hidden_occurrences(tmp_path):
     assert len(doc.editor_groups(re.compile(r'^\$\[0\]\.label$'))[0]) == 3
     assert len(doc.editor_groups(re.compile('description'))) == 1
     assert not doc.editor_groups(re.compile('no-match'))
+
+
+def test_partial_write_keeps_original_backup_and_pending_edits(tmp_path):
+    doc = create(tmp_path, {'label': 'old'})
+    doc.edit(doc.fields[0], 'new')
+    original_open = Path.open
+
+    class BrokenWriter:
+        def __enter__(self):
+            self.stream = original_open(doc.path, 'r+b')
+            return self
+
+        def write(self, output):
+            self.stream.write(output[:3])
+            self.stream.flush()
+            raise OSError('部分写入后失败')
+
+        def __exit__(self, *args):
+            self.stream.close()
+
+    def open_file(path, mode='r', *args, **kwargs):
+        if path == doc.path and mode == 'r+b':
+            return BrokenWriter()
+        return original_open(path, mode, *args, **kwargs)
+
+    with patch.object(Path, 'open', open_file):
+        with pytest.raises(OSError, match='部分写入'):
+            doc.save()
+    assert doc.path.read_bytes() != doc.raw
+    assert doc.path.with_name('data.json.bak').read_bytes() == doc.raw
+    assert doc.edits
+
+
+def test_backup_creation_denied_stops_save(tmp_path):
+    doc = create(tmp_path, {'label': 'old'})
+    doc.edit(doc.fields[0], 'new')
+    original_open = Path.open
+
+    def open_file(path, mode='r', *args, **kwargs):
+        if mode == 'xb':
+            raise PermissionError('备份权限不足')
+        return original_open(path, mode, *args, **kwargs)
+
+    with patch.object(Path, 'open', open_file):
+        with pytest.raises(PermissionError):
+            doc.save()
+    assert doc.path.read_bytes() == doc.raw
+    assert doc.edits
+    assert not doc.path.with_name('data.json.bak').exists()
